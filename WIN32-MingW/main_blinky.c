@@ -92,8 +92,9 @@
 #include "semphr.h"
 
 /* Priorities at which the tasks are created. */
-#define mainQUEUE_RECEIVE_TASK_PRIORITY		( 1 )
-#define	mainQUEUE_SEND_TASK_PRIORITY		( 2 )
+#define	Frequency_Generation_PRIORITY	  ( 2 )
+#define Frequency_Updater_PRIORITY		  ( 1 )
+#define Keyboard_Simulation_ISR_PRIORITY  ( 3 )
 
 /* The rate at which data is sent to the queue.  The times are converted from
 milliseconds to ticks using the pdMS_TO_TICKS() macro.
@@ -112,9 +113,9 @@ queue send software timer respectively.
 
  * The tasks as described in the comments at the top of this file.
  */
-static void prvQueueReceiveTask(  );
-static void prvQueueSendTask(  );
-
+static void FrequencyUpdaterTask(  );
+static void FrequencyGenerationTask(  );
+static void KeyboardSimulationISRTask( );
 
 
 /*-----------------------------------------------------------*/
@@ -152,15 +153,15 @@ void main_blinky( void )
 	{
 		/* Start the two tasks as described in the comments at the top of this
 		file. */
-		xTaskCreate( prvQueueReceiveTask,			/* The function that implements the task. */
+		xTaskCreate(FrequencyUpdaterTask,			/* The function that implements the task. */
 					"Rx", 							/* The text name assigned to the task - for debug only as it is not used by the kernel. */
 					2048, 		/* The size of the stack to allocate to the task. */
 					NULL, 							/* The parameter passed to the task - not used in this simple case. */
-					mainQUEUE_RECEIVE_TASK_PRIORITY,/* The priority assigned to the task. */
+					Frequency_Updater_PRIORITY,/* The priority assigned to the task. */
 					NULL );							/* The task handle is not required, so NULL is passed. */
 
-		xTaskCreate( prvQueueSendTask, "TX", 2048, NULL, mainQUEUE_SEND_TASK_PRIORITY, NULL );
-
+		xTaskCreate( FrequencyGenerationTask, "TX", 2048, NULL, Frequency_Generation_PRIORITY, NULL );
+		//xTaskCreate( KeyboardSimulationISRTask, "Tn", 2048, NULL, Keyboard_Simulation_ISR_PRIORITY, NULL );
 
 		/* Start the tasks and timer running. */
 		vTaskStartScheduler();
@@ -179,7 +180,7 @@ int GetVirtualSystemTime ( int VirtualSystemTimeCount ){
 	return VirtualSystemTimeCount * 20;
 }
 
-static void prvQueueSendTask(  )
+static void FrequencyGenerationTask(  )
 {
 	while(1){
 		int num = ( rand() % (320-300 + 1) + 300 );
@@ -191,12 +192,12 @@ static void prvQueueSendTask(  )
  	 	printf("timestamp is %d \n", freq_SIM_ISR.timestamp);
  	 	printf("\n---------------------------------\n");
 		xQueueSendToFront(frequencyQ, &freq_SIM_ISR, 0 );
-		vTaskDelay(2000);
+		vTaskDelay(20000);
 	}
 }
 /*-----------------------------------------------------------*/
 
-static void prvQueueReceiveTask( )
+static void FrequencyUpdaterTask( )
 {
 		float freqValNew = 0;
 		float freqValOld = 0;
@@ -231,8 +232,38 @@ static void prvQueueReceiveTask( )
 				printf("\n !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! \n");
 			}
 			fflush( stdout );
-			vTaskDelay(200);
+			vTaskDelay(2000);
 		}
 }
 /*-----------------------------------------------------------*/
-
+static void KeyboardSimulationISRTask( ){
+	float thre_fre = 0;
+	float thre_roc = 0;
+	int modekey;
+	int state;
+	while (1){
+		vTaskDelay(200);
+		printf("Please enter keyboard manager state, 1 for udpate thre_fre, 2 for  update thre_roc, 3 for update mode\n");
+		scanf("%d", &state);
+		switch(state){
+			case 1:
+				printf("Please enter updated threshold of frequency!\n");
+				scanf("%f", &thre_fre);
+				if (thre_fre != 0){
+					printf("threshold of freqency is %f\n", thre_fre);
+					thre_fre = 0;
+					break;
+				}
+			case 2:
+				printf("Please enter updated threshold of ROC!\n");
+				scanf("%f\n", &thre_roc);
+				if (thre_roc != 0){
+					printf("threshold of roc is %f \n",  thre_roc);
+					thre_roc = 0;
+					break;
+				}
+			break;
+		}
+		vTaskDelay(200);
+	}
+}
