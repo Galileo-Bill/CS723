@@ -9,9 +9,9 @@
 #include "semphr.h"
 
 /* Priorities at which the tasks are created. */
-#define	Frequency_VirtualISR_PRIORITY	  ( 3 )
+#define	Frequency_VirtualISR_PRIORITY	  ( 2 )
 #define Frequency_Updater_PRIORITY		  ( 1 )
-#define Keyboard_Simulation_ISR_PRIORITY  ( 2 )
+#define Keyboard_Simulation_ISR_PRIORITY  ( 3 )
 
 /* definition of task stack*/
 #define TASK_STACKSIZE                   2048
@@ -25,7 +25,7 @@ void initCreateTasks(void);
 void FrequencyVirtualISRTask(  );
 void FrequencyUpdaterTask(  );
 void KeyboardSimulationISRTask( );
-void loadMangerTask( );
+//void loadMangerTask( );
 
 /*###########Helper function##################*/
 int GetVirutalSystemTime ( int VirtualSystemTimeCount );
@@ -40,14 +40,15 @@ int GetVirutalSystemTime ( int VirtualSystemTimeCount );
  * ##############################################
  */
 xQueueHandle frequencyQ;
-
+xQueueHandle freqRocDataQ;
 /*##############################################
  * ########Gobal Var############################
  * #############################################
  */
 double VirtualSystemTime = 0;
 double num[100] = {0};
-
+TaskHandle_t xHandle;
+TaskHandle_t yHandle;
 /*##############################################
  * #######struct data type######################
  * ############################################3
@@ -77,7 +78,6 @@ void main_blinky( void )
 	initCreateTasks();
 	printf("Tasks has initialised!\n");
 
-
 	/* Start the tasks. */
 	vTaskStartScheduler();
 
@@ -87,13 +87,15 @@ void main_blinky( void )
 
 void initDataStructs(void){
 	frequencyQ = xQueueCreate( 100, sizeof(struct frequency_time  ) );
+	freqRocDataQ = xQueueCreate(100, sizeof(struct frequency_ROC ) );
 	return;
 }
 
 
 void initCreateTasks(void){
-	xTaskCreate( FrequencyVirtualISRTask, "FrequencyVirtualISRTask", TASK_STACKSIZE , NULL, Frequency_VirtualISR_PRIORITY, NULL );
-	xTaskCreate( FrequencyUpdaterTask, "FrequencyUpdaterTask", TASK_STACKSIZE , NULL, Frequency_Updater_PRIORITY, NULL );
+	xTaskCreate( FrequencyVirtualISRTask, "FrequencyVirtualISRTask", TASK_STACKSIZE , NULL, Frequency_VirtualISR_PRIORITY, &xHandle );
+	xTaskCreate( FrequencyUpdaterTask, "FrequencyUpdaterTask", TASK_STACKSIZE , NULL, Frequency_Updater_PRIORITY, &yHandle );
+	xTaskCreate( KeyboardSimulationISRTask, "KeyboardSimulationISRTask", TASK_STACKSIZE , NULL, Keyboard_Simulation_ISR_PRIORITY, NULL );
 	return;
 }
 
@@ -157,6 +159,7 @@ void FrequencyUpdaterTask( )
 				frequency_ROC.freqData = freqValNew;
 				frequency_ROC.rocData = roc;
 				frequency_ROC.timestamp = ReceiveGenerateFre.timestamp;
+				xQueueSendToFront(freqRocDataQ, &freuency_ROC, 0);
 				printf("FreData is %lf\n", freqValNew);
 				printf("ROC is %lf \n", roc);
 				printf("Timestamp is %lf \n", frequency_ROC.timestamp);
@@ -166,36 +169,61 @@ void FrequencyUpdaterTask( )
 			vTaskDelay(200);
 		}
 }
-/*-----------------------------------------------------------
-static void KeyboardSimulationISRTask( ){
-	float thre_fre = 0;
-	float thre_roc = 0;
-	int modekey;
-	int state;
+
+void loadManagerTask(){
+
+	//load Manager State
+	#define NORMAL 0
+	#define LOAD_MANAGE 1
+	#define MAINTENANCE 2
+
+	int loadManagerState = NORMAL;
+
 	while (1){
-		vTaskDelay(200);
-		printf("Please enter keyboard manager state, 1 for udpate thre_fre, 2 for  update thre_roc, 3 for update mode\n");
-		scanf("%d", &state);
-		switch(state){
-			case 1:
-				printf("Please enter updated threshold of frequency!\n");
-				scanf("%f", &thre_fre);
-				if (thre_fre != 0){
-					printf("threshold of freqency is %f\n", thre_fre);
-					thre_fre = 0;
-					break;
-				}
-			case 2:
-				printf("Please enter updated threshold of ROC!\n");
-				scanf("%f\n", &thre_roc);
-				if (thre_roc != 0){
-					printf("threshold of roc is %f \n",  thre_roc);
-					thre_roc = 0;
-					break;
-				}
-			break;
+		switch (loadMangerState){
+			case NORMAL:
+
+
+			case LOAD_MANAGE:
+
+
+			case MAINTENANCE:
 		}
-		vTaskDelay(200);
 	}
 }
-*/
+
+//void KeyboardSimulationISRTask( ){
+//	float thre_fre = 0;
+//	float thre_roc = 0;
+//	int modekey;
+//	char state;
+//	int a = 0;
+//	while(1){
+//		a = printf("######################\nPlease Enter state input\n############################\n");
+//		if (a !=0 ){
+//			vTaskSuspendAll();
+//		}
+//		state = getchar();
+//		printf("######################\nThe input state is\n###############################\n");
+//		putchar(state);
+//		xTaskResumeAll();
+////		switch(state){
+////			case 'a':
+////				printf("Updated threshold of frequency!\n");
+////				if (thre_fre != 0){
+////					printf("threshold of freqency is 66.6 \n");
+////					thre_fre = 0;
+////					break;
+////				}
+////			case 'b':
+////				printf("Updated threshold of ROC!\n");
+////				if (thre_roc != 0){
+////					printf("threshold of roc is 50.5 \n");
+////					thre_roc = 0;
+////					break;
+////				}
+////			break;
+////		}
+//		vTaskDelay(25);
+//	}
+//}
