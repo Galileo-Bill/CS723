@@ -9,9 +9,9 @@
 #include "semphr.h"
 
 /* Priorities at which the tasks are created. */
-#define	Frequency_VirtualISR_PRIORITY	  ( 2 )
+#define	Frequency_VirtualISR_PRIORITY	  ( 3 )
 #define Frequency_Updater_PRIORITY		  ( 1 )
-#define Keyboard_Simulation_ISR_PRIORITY  ( 3 )
+#define Keyboard_Simulation_ISR_PRIORITY  ( 2 )
 
 /* definition of task stack*/
 #define TASK_STACKSIZE                   2048
@@ -25,13 +25,14 @@ void initCreateTasks(void);
 void FrequencyVirtualISRTask(  );
 void FrequencyUpdaterTask(  );
 void KeyboardSimulationISRTask( );
+
 //void loadMangerTask( );
 
 /*###########Helper function##################*/
 int GetVirutalSystemTime ( int VirtualSystemTimeCount );
 
 /*###########Timer Callback##################*/
-//void vTimer500MSCallback(xTimeHandle t_timer);
+void vTimer500MSCallback(TimerHandle_t timer500ms);
 
 
 
@@ -41,14 +42,25 @@ int GetVirutalSystemTime ( int VirtualSystemTimeCount );
  */
 xQueueHandle frequencyQ;
 xQueueHandle freqRocDataQ;
+
+
+SemaphoreHandle_t thresholdSemaphore;
 /*##############################################
  * ########Gobal Var############################
  * #############################################
  */
 double VirtualSystemTime = 0;
 double num[100] = {0};
+double timestamp[100] = {0};
+int SWITCHES[5] = {1,1,1,1,1};
+double frequencyThreshold = 45;
+double rocThreshold = 300;
+int wasStable = 1;
+int timerExpiryFlag = 0;
+
 TaskHandle_t xHandle;
 TaskHandle_t yHandle;
+TimerHandle_t timer500ms;
 /*##############################################
  * #######struct data type######################
  * ############################################3
@@ -77,7 +89,8 @@ void main_blinky( void )
 	printf("Data struct has initialised!\n");
 	initCreateTasks();
 	printf("Tasks has initialised!\n");
-
+	xTimerStart(timer500ms, 0);
+	printf("Timer is started\n");
 	/* Start the tasks. */
 	vTaskStartScheduler();
 
@@ -88,11 +101,13 @@ void main_blinky( void )
 void initDataStructs(void){
 	frequencyQ = xQueueCreate( 100, sizeof(struct frequency_time  ) );
 	freqRocDataQ = xQueueCreate(100, sizeof(struct frequency_ROC ) );
+	timer500ms = xTimerCreate("Timer", 500, pdFALSE, NULL, vTimer500MSCallback);
 	return;
 }
 
 
 void initCreateTasks(void){
+
 	xTaskCreate( FrequencyVirtualISRTask, "FrequencyVirtualISRTask", TASK_STACKSIZE , NULL, Frequency_VirtualISR_PRIORITY, &xHandle );
 	xTaskCreate( FrequencyUpdaterTask, "FrequencyUpdaterTask", TASK_STACKSIZE , NULL, Frequency_Updater_PRIORITY, &yHandle );
 	xTaskCreate( KeyboardSimulationISRTask, "KeyboardSimulationISRTask", TASK_STACKSIZE , NULL, Keyboard_Simulation_ISR_PRIORITY, NULL );
@@ -100,31 +115,31 @@ void initCreateTasks(void){
 }
 
 
-int GetVirtualSystemTime ( int NI ){
+double GetVirtualSystemTime ( double NI ){
 	VirtualSystemTime = VirtualSystemTime + NI / 16;
 	return VirtualSystemTime;
 }
 
 void FrequencyVirtualISRTask(  )
 {
-	for (int i = 0; i < 100; i++){
-		num[i] = ( rand() % (400-266 + 1) + 266 );
-	}
-	for (int i = 0; i < 100; i++){
+	for ( int i = 0; i < 100; i++){
+		num[i] = 320;
 		printf("num[%d] is %lf\n", i, num[i]);
+
 	}
 
 	while(1){
 		for (int j = 0; j < 100; j++){
-			freq_SIM_ISR.frequency = 16000 / (double)num[j];
+			freq_SIM_ISR.frequency = 16000 / num[j];
  	 		freq_SIM_ISR.timestamp = GetVirtualSystemTime(num[j]);
 
  	 		printf("\n---------------------------------\n");
  	 		printf("frequency is %lf \n", freq_SIM_ISR.frequency);
  	 		printf("timestamp is %lf \n", freq_SIM_ISR.timestamp);
  	 		printf("\n---------------------------------\n");
+ 	 		printf("\ntimeflag is %d.\n", timerExpiryFlag);
  	 		xQueueSendToFront(frequencyQ, &freq_SIM_ISR, 0 );
- 	 		vTaskDelay(2000);
+ 	 		vTaskDelay(100);
 		}
 	}
 }
@@ -159,7 +174,7 @@ void FrequencyUpdaterTask( )
 				frequency_ROC.freqData = freqValNew;
 				frequency_ROC.rocData = roc;
 				frequency_ROC.timestamp = ReceiveGenerateFre.timestamp;
-				xQueueSendToFront(freqRocDataQ, &freuency_ROC, 0);
+				xQueueSendToFront(freqRocDataQ, &frequency_ROC, 0);
 				printf("FreData is %lf\n", freqValNew);
 				printf("ROC is %lf \n", roc);
 				printf("Timestamp is %lf \n", frequency_ROC.timestamp);
@@ -170,60 +185,159 @@ void FrequencyUpdaterTask( )
 		}
 }
 
-void loadManagerTask(){
+//void loadManagerTask(){
+//
+//	//load Manager State
+//	#define NORMAL 0
+//	#define LOAD_MANAGE 1
+//	#define MAINTENANCE 2
+//
+//	int loadManagerState = NORMAL;
+//	double rocThresholdLocal = 0;
+//	double freqThresholdLocal = 0;
+//	int isTripCond = 0;
+//
+//	struct frequency_ROC freqROCMsg;
+//
+//	while (1){
+//		switch (loadManagerState){
+//			case NORMAL:
+//				if (xQueueReceive(freqRocDataQ, &freqROCMsg, 0)){
+//					//store 50 recent frequency and roc
+//					updateRunningData(freqROCMsg);
+//
+//					//update the threshold
+//					xSemaphoreTake(thresholdSemaphore, 0);
+//
+//					rocThresholdLocal = rocThreshold;
+//					freqThresholdLocal = frequencyThreshold;
+//
+//					xSemaphoreGive(thresholdSemaphore);
+//
+//					isTripCond = checkTrippingConditions(freqROCMsg, freqThresholdLocal, rocThresholdLocal);
+//
+//					if (isTripCond){
+//						//first load shedding
+//						shedLoad(SWITCHES);
+//						computeReactionTimeStats(xTaskGetTickCount(), freqROCMsg);
+//
+//						//state become unstable
+//						wasStable = 0;
+//						loadManagerState = LOAD_MANAGE;
+//						restartFreeRTOSTimer();
+//
+//						printf("\n################Load manager mode##################\n");
+//					}
+//				}
+//
+//			case LOAD_MANAGE:
+//
+//				//Handles timer expiry if an input has not arrived yet
+//				if (timeExpiryFlag){
+//					print("####Timer expiry before new input received#####\n");
+//					if (wasStable){
+//						if(reconnectLoad(SWITCHES) == 1){
+//							stopFreeRTOSTimer();
+//							loadManagerState = NORMAL;
+//							printf("\n\n######Normal Mode#########\n\n");
+//						}
+//						else{
+//							restartFreeRTOSTimer();
+//						}
+//					}else{
+//						shedLoad(SWTICHES);
+//						restartFreeRTOStimer();
+//					}
+//					break;
+//				}
+//
+//
+//				if (xQueueReceive(freqRocDataQ, &freqROCMsg, 0)){
+//						//store 50 recent frequency and roc
+//						updateRunningData(freqROCMsg);
+//
+//						//update the threshold
+//						xSemaphoreTake(thresholdSemaphore, 0);
+//
+//						rocThresholdLocal = rocThreshold;
+//						freqThresholdLocal = frequencyThreshold;
+//
+//						xSemaphoreGive(thresholdSemaphore);
+//
+//						isTripCond = checkTrippingConditions(freqROCMsg, freqThresholdLocal, rocThresholdLocal);
+//
+//						//if isTripCond is true, then unstable
+//						if (isTripCond && wasStable){
+//							wasStable = 0;
+//							restartFreeRTOStimer();
+//						}else if(isTripCond && !wasStable){
+//							wasStable = 0;
+//							if (timeExpiryFlag){
+//									shedLoad(SWITCHES);
+//									restartFreeRTOSTimer();
+//							}
+//						}else if(!isTripCond && wasStable){
+//							wasStable = 1;
+//							if (timeExpiryFlag){
+//								if (reconnectLoad(SWITCHES) == 1){
+//									stopFreeRTOSTimer();
+//									loadManagerState = NORMAL;
+//									printf("\n\n##################Noraml Mode###########\n\n");
+//								}else{
+//									restartFreeRTOSTimer();
+//								}
+//							}
+//						}else if (!isTripCond && !wasStable){
+//							wasStable = 1;
+//							restartFreeRTOSTimer();
+//						}
+//						break;
+//				}
+//				//isTripCond = false mean nothing happen , unstable (wasstable = 0)
+//
+//
+//			case MAINTENANCE:
+//
+//				break;
+//		}
+//
+//	}
+//}
 
-	//load Manager State
-	#define NORMAL 0
-	#define LOAD_MANAGE 1
-	#define MAINTENANCE 2
-
-	int loadManagerState = NORMAL;
-
-	while (1){
-		switch (loadMangerState){
-			case NORMAL:
-
-
-			case LOAD_MANAGE:
-
-
-			case MAINTENANCE:
-		}
+void KeyboardSimulationISRTask( ){
+	float thre_fre = 0;
+	float thre_roc = 0;
+//	int modekey;
+	char state;
+	while(1){
+		printf("######################\nPlease Enter state input\n############################\n");
+	//	vTaskSuspendAll();
+	  //tate = getchar();
+	//	printf("######################\nThe input state is\n###############################\n");
+	//	putchar(state);
+	//	xTaskResumeAll();
+//		switch(state){
+//			case 'a':
+//				printf("Updated threshold of frequency!\n");
+//				if (thre_fre != 0){
+//					printf("threshold of freqency is 66.6 \n");
+//					thre_fre = 0;
+//					break;
+//				}
+//			case 'b':
+//			printf("Updated threshold of ROC!\n");
+//				if (thre_roc != 0){
+//					printf("threshold of roc is 50.5 \n");
+//					thre_roc = 0;
+//					break;
+//				}
+//			break;
+//		}
+		vTaskDelay(2500);
 	}
 }
 
-//void KeyboardSimulationISRTask( ){
-//	float thre_fre = 0;
-//	float thre_roc = 0;
-//	int modekey;
-//	char state;
-//	int a = 0;
-//	while(1){
-//		a = printf("######################\nPlease Enter state input\n############################\n");
-//		if (a !=0 ){
-//			vTaskSuspendAll();
-//		}
-//		state = getchar();
-//		printf("######################\nThe input state is\n###############################\n");
-//		putchar(state);
-//		xTaskResumeAll();
-////		switch(state){
-////			case 'a':
-////				printf("Updated threshold of frequency!\n");
-////				if (thre_fre != 0){
-////					printf("threshold of freqency is 66.6 \n");
-////					thre_fre = 0;
-////					break;
-////				}
-////			case 'b':
-////				printf("Updated threshold of ROC!\n");
-////				if (thre_roc != 0){
-////					printf("threshold of roc is 50.5 \n");
-////					thre_roc = 0;
-////					break;
-////				}
-////			break;
-////		}
-//		vTaskDelay(25);
-//	}
-//}
+void vTimer500MSCallback(TimerHandle_t timer500ms){
+	timerExpiryFlag = 1;
+	printf("\n\n################Timer Expired!###############\n\n");
+}
