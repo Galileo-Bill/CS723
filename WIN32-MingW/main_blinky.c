@@ -9,10 +9,10 @@
 #include "semphr.h"
 
 /* Priorities at which the tasks are created. */
-#define	Frequency_VirtualISR_PRIORITY	  ( 3 )
-#define Frequency_Updater_PRIORITY		  ( 1 )
-#define Keyboard_Simulation_ISR_PRIORITY  ( 2 )
-
+#define	Frequency_VirtualISR_PRIORITY	  ( 4 )
+#define Frequency_Updater_PRIORITY		  ( 2 )
+#define Keyboard_Simulation_ISR_PRIORITY  ( 3 )
+#define load_Manager_Task_PRIORITY        ( 1 )
 /* definition of task stack*/
 #define TASK_STACKSIZE                   2048
 
@@ -25,7 +25,7 @@ xQueueHandle frequencyQ;
 xQueueHandle freqRocDataQ;
 
 
-SemaphoreHandle_t thresholdSemaphore;
+SemaphoreHandle_t thresholdSemaphore = NULL;
 /*##############################################
  * ########Gobal Var############################
  * #############################################
@@ -73,19 +73,19 @@ void initCreateTasks(void);
 void FrequencyVirtualISRTask(  );
 void FrequencyUpdaterTask(  );
 void KeyboardSimulationISRTask( );
-void loadMangerTask( );
+void loadManagerTask( );
 
 /*###########Helper function##################*/
 int GetVirutalSystemTime ( int VirtualSystemTimeCount );
 void updateRunningData(struct frequency_ROC frequency_ROC_Data);
 int checkTrippingConditions(struct frequency_ROC frequency_ROC_Data,  double freqThresholdLocal, double rocThresholdLocal);
 int shedLoad(int SWITCHES[]);
-//int reconnectLoad();
-//double computeReactionTimeStats();
+int reconnectLoad(int SWITCHES[]);
+void computeReactionTimeStatus(double currentTime, struct frequency_ROC frequency_ROC_Data);
 /*###########Timer Callback##################*/
 void vTimer500MSCallback(TimerHandle_t timer500ms);
-//void restartFreeRTOSTimer();
-//void stopFreeRTOSTimer();
+void restartFreeRTOSTimer();
+void stopFreeRTOSTimer();
 /*** SEE THE COMMENTS AT THE TOP OF THIS FILE ***/
 void main_blinky( void )
 {
@@ -106,7 +106,7 @@ void main_blinky( void )
 void initDataStructs(void){
 	frequencyQ = xQueueCreate( 100, sizeof(struct frequency_time  ) );
 	freqRocDataQ = xQueueCreate(100, sizeof(struct frequency_ROC ) );
-	timer500ms = xTimerCreate("Timer", 500, pdFALSE, NULL, vTimer500MSCallback);
+	timer500ms = xTimerCreate("Timer", 2500, pdFALSE, NULL, vTimer500MSCallback);
 	return;
 }
 
@@ -115,7 +115,8 @@ void initCreateTasks(void){
 
 	xTaskCreate( FrequencyVirtualISRTask, "FrequencyVirtualISRTask", TASK_STACKSIZE , NULL, Frequency_VirtualISR_PRIORITY, &xHandle );
 	xTaskCreate( FrequencyUpdaterTask, "FrequencyUpdaterTask", TASK_STACKSIZE , NULL, Frequency_Updater_PRIORITY, &yHandle );
-	xTaskCreate( KeyboardSimulationISRTask, "KeyboardSimulationISRTask", TASK_STACKSIZE , NULL, Keyboard_Simulation_ISR_PRIORITY, NULL );
+  //xTaskCreate( KeyboardSimulationISRTask, "KeyboardSimulationISRTask", TASK_STACKSIZE , NULL, Keyboard_Simulation_ISR_PRIORITY, NULL );
+	xTaskCreate( loadManagerTask, "loadManagerTask", TASK_STACKSIZE , NULL, load_Manager_Task_PRIORITY, NULL );
 	return;
 }
 
@@ -183,12 +184,14 @@ void FrequencyUpdaterTask( )
 				printf("FreData is %lf\n", freqValNew);
 				printf("ROC is %lf \n", roc);
 				printf("Timestamp is %lf \n", frequency_ROC_Data.timestamp);
+				printf("Current Time is %d", xTaskGetTickCount()/5 + 20);
 				printf("\n !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! \n");
 			}
 			fflush( stdout );
-			vTaskDelay(200);
+			vTaskDelay(140);
 		}
 }
+
 
 void loadManagerTask(){
 
@@ -209,50 +212,57 @@ void loadManagerTask(){
 		switch (loadManagerState){
 			case NORMAL:
 				if (xQueueReceive(freqRocDataQ, &frequency_ROC_Data, 0)){
+					printf("\n################Normal mode##################\n");
 					//store 50 recent frequency and roc
 					updateRunningData(frequency_ROC_Data);
-
+					printf("\n################Update finished##################\n");
 					//update the threshold
-					xSemaphoreTake(thresholdSemaphore, 0);
 
+					xSemaphoreTake(thresholdSemaphore, 0);
+					printf("\n################Load manager mode##################\n");
 					rocThresholdLocal = rocThreshold;
 					freqThresholdLocal = frequencyThreshold;
-
-					xSemaphoreGive(thresholdSemaphore);
+					//problem is here
+				    xSemaphoreGive(thresholdSemaphore);
+					printf("given process is succeed!\n");
 
 					isTripCond = checkTrippingConditions(frequency_ROC_Data, freqThresholdLocal, rocThresholdLocal);
 
+					printf("is Trip Cond = %d", isTripCond);
 					if (isTripCond){
 						//first load shedding
 						shedLoad(SWITCHES);
-//						computeReactionTimeStats(xTaskGetTickCount(), frequency_ROC_Data);
+						computeReactionTimeStatus(xTaskGetTickCount()/5 + 20, frequency_ROC_Data);
 
 						//state become unstable
 						wasStable = 0;
 						loadManagerState = LOAD_MANAGE;
-//						restartFreeRTOSTimer();
+						restartFreeRTOSTimer();
 
 						printf("\n################Load manager mode##################\n");
 					}
 				}
+				break;
+
 
 			case LOAD_MANAGE:
-
+				printf("\n################Load manager mode##################\n");
+				/*
 				//Handles timer expiry if an input has not arrived yet
 				if (timerExpiryFlag){
 					printf("####Timer expiry before new input received#####\n");
 					if (wasStable){
-//						if(reconnectLoad(SWITCHES) == 1){
-//							stopFreeRTOSTimer();
+						if(reconnectLoad(SWITCHES) == 1){
+							stopFreeRTOSTimer();
 							loadManagerState = NORMAL;
 							printf("\n\n######Normal Mode#########\n\n");
 						}
 						else{
-//							restartFreeRTOSTimer();
+							restartFreeRTOSTimer();
 						}
 					}else{
 						shedLoad(SWITCHES);
-//						restartFreeRTOStimer();
+						restartFreeRTOSTimer();
 					}
 					break;
 				}
@@ -275,82 +285,88 @@ void loadManagerTask(){
 						//if isTripCond is true, then unstable
 						if (isTripCond && wasStable){
 							wasStable = 0;
-//							restartFreeRTOStimer();
+							restartFreeRTOSTimer();
 						}else if(isTripCond && !wasStable){
 							wasStable = 0;
 							if (timerExpiryFlag){
 									shedLoad(SWITCHES);
-//									restartFreeRTOSTimer();
+									restartFreeRTOSTimer();
 							}
 						}else if(!isTripCond && wasStable){
 							wasStable = 1;
 							if (timerExpiryFlag){
-//								if (reconnectLoad(SWITCHES) == 1){
-//									stopFreeRTOSTimer();
+								if (reconnectLoad(SWITCHES) == 1){
+									stopFreeRTOSTimer();
 									loadManagerState = NORMAL;
 									printf("\n\n##################Noraml Mode###########\n\n");
 								}else{
-//									restartFreeRTOSTimer();
+									restartFreeRTOSTimer();
 								}
 							}
 						}else if (!isTripCond && !wasStable){
 							wasStable = 1;
-//							restartFreeRTOSTimer();
+							restartFreeRTOSTimer();
 						}
-						break;
+
 				}
+				*/
+				break;
 				//isTripCond = false mean nothing happen , unstable (wasstable = 0)
 
 
 			case MAINTENANCE:
-
+				printf("\n################Maintenance mode##################\n");
 				break;
 		}
-
+		vTaskDelay(50);
 	}
 }
-
+/*
 void KeyboardSimulationISRTask( ){
+
 	float thre_fre = 0;
 	float thre_roc = 0;
-//	int modekey;
+	int modekey;
 	char state;
+
 	while(1){
 		printf("######################\nPlease Enter state input\n############################\n");
-	//	vTaskSuspendAll();
-	  //tate = getchar();
-	//	printf("######################\nThe input state is\n###############################\n");
-	//	putchar(state);
-	//	xTaskResumeAll();
-//		switch(state){
-//			case 'a':
-//				printf("Updated threshold of frequency!\n");
-//				if (thre_fre != 0){
-//					printf("threshold of freqency is 66.6 \n");
-//					thre_fre = 0;
-//					break;
-//				}
-//			case 'b':
-//			printf("Updated threshold of ROC!\n");
-//				if (thre_roc != 0){
-//					printf("threshold of roc is 50.5 \n");
-//					thre_roc = 0;
-//					break;
-//				}
-//			break;
-//		}
+		vTaskSuspendAll();
+	    state = getchar();
+		printf("######################\nThe input state is\n###############################\n");
+		putchar(state);
+		xTaskResumeAll();
+		switch(state){
+			case 'a':
+				printf("Updated threshold of frequency!\n");
+				if (thre_fre != 0){
+					printf("threshold of freqency is 66.6 \n");
+					thre_fre = 0;
+					break;
+				}
+			case 'b':
+			printf("Updated threshold of ROC!\n");
+				if (thre_roc != 0){
+					printf("threshold of roc is 50.5 \n");
+					thre_roc = 0;
+					break;
+				}
+			break;
+		}
 		vTaskDelay(2500);
 	}
 }
+*/
 void updateRunningData(struct frequency_ROC frequency_ROC_Data){
 	double freDataLocal = frequency_ROC_Data.freqData;
 	double rocDataLocal = frequency_ROC_Data.rocData;
 
 	//add the recent 50 data
-	if(runningDataIndex <49){
+	if(runningDataIndex < 49){
 		frequencyData[runningDataIndex] = freDataLocal;
 		rocData[runningDataIndex] = rocDataLocal;
 		runningDataIndex++;
+		printf("Updating !!!\n");
 	}else{
 		//move all the data forward
 		for(int i = 48; i >= 0; i--){
@@ -378,6 +394,7 @@ int checkTrippingConditions(struct frequency_ROC frequency_ROC_Data,  double fre
 
 void vTimer500MSCallback(TimerHandle_t timer500ms){
 	timerExpiryFlag = 1;
+	printf("Current Time is %d", xTaskGetTickCount()/5 + 20);
 	printf("\n\n################Timer Expired!###############\n\n");
 }
 
@@ -403,4 +420,52 @@ int shedLoad(int SWITCHES[]){
 		return 0;
 	}
 
+}
+
+int reconnectLoad(int SWITCHES[]){
+	int loadToReconnect = -1;
+	for (int i = 4; i >= 0; i--){
+		if (SWITCHES[i] == 1 && loadStatus[i] == 0){
+			loadToReconnect = i;
+		}
+	}
+	//switch 1 is nothing happen,  0 is turn light on
+	if (loadToReconnect != -1){
+		loadStatus[loadToReconnect] = 1;
+		printf("\nRed Led%d is %d, Green Led%d is %d\n",loadToReconnect, 1, loadToReconnect, 0);
+		//red led 0 means turn off, green led 1 means turn on
+		printf("\nReconnected load: %d\n", loadToReconnect);
+		if (loadStatus[0] == 1 && loadStatus[1] == 1 && loadStatus[2] == 1 && loadStatus[3] == 1 && loadStatus[4] == 1){
+			return 1;
+		}else{
+			return 0;
+		}
+	}
+	else{
+		printf("\nAll load connected or all loads manully switched off\n");
+		return -1 ;
+	}
+
+}
+
+void computeReactionTimeStatus(double currentTime, struct frequency_ROC frequency_ROC_Data){
+	double reactionTimeLocal = currentTime - frequency_ROC_Data.timestamp;
+	printf("reactionTime is %lf", reactionTimeLocal);
+}
+
+void restartFreeRTOSTimer(){
+	stopFreeRTOSTimer();
+
+	while(xTimerStart(timer500ms, 0) == pdFAIL){
+		printf("Cannot start timer\n\n");
+	}
+}
+
+void stopFreeRTOSTimer(){
+	if (xTimerIsTimerActive(timer500ms) == pdTRUE){
+			while(xTimerStop(timer500ms, 0) == pdFAIL){
+				printf("Cannot stop timer\n\n");
+			}
+		}
+		timerExpiryFlag = 0;
 }
