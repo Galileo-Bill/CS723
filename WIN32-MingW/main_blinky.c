@@ -25,7 +25,7 @@ xQueueHandle frequencyQ;
 xQueueHandle freqRocDataQ;
 
 
-SemaphoreHandle_t thresholdSemaphore = NULL;
+SemaphoreHandle_t thresholdSemaphore;
 /*##############################################
  * ########Gobal Var############################
  * #############################################
@@ -33,7 +33,7 @@ SemaphoreHandle_t thresholdSemaphore = NULL;
 double VirtualSystemTime = 0;
 double num[100] = {0};
 double timestamp[100] = {0};
-double frequencyThreshold = 45;
+double frequencyThreshold = 49;
 double rocThreshold = 300;
 int wasStable = 1;
 int timerExpiryFlag = 0;
@@ -106,7 +106,8 @@ void main_blinky( void )
 void initDataStructs(void){
 	frequencyQ = xQueueCreate( 100, sizeof(struct frequency_time  ) );
 	freqRocDataQ = xQueueCreate(100, sizeof(struct frequency_ROC ) );
-	timer500ms = xTimerCreate("Timer", 2500, pdFALSE, NULL, vTimer500MSCallback);
+	timer500ms = xTimerCreate("Timer", 500, pdFALSE, NULL, vTimer500MSCallback);
+	thresholdSemaphore = xSemaphoreCreateMutex();
 	return;
 }
 
@@ -128,24 +129,40 @@ double GetVirtualSystemTime ( double NI ){
 
 void FrequencyVirtualISRTask(  )
 {
-	for ( int i = 0; i < 100; i++){
+	for ( int i = 0; i < 20; i++){
 		num[i] = 320;
 		printf("num[%d] is %lf\n", i, num[i]);
-
 	}
-
+	num[20] = 321;
+	num[21] = 323;
+	num[22] = 324;
+	num[23] = 325;
+	for ( int i = 24; i < 40; i++){
+		num[i] = 327;
+		printf("num[%d] is %lf\n", i, num[i]);
+	}
+	num[40] = 325;
+	num[41] = 324;
+	num[42] = 323;
+	num[41] = 321;
+	for ( int i = 42; i < 100; i++){
+		num[i] = 320;
+		printf("num[%d] is %lf\n", i, num[i]);
+	}
+	vTaskDelay(150);
 	while(1){
 		for (int j = 0; j < 100; j++){
 			freq_SIM_ISR.frequency = 16000 / num[j];
  	 		freq_SIM_ISR.timestamp = GetVirtualSystemTime(num[j]);
 
- 	 		printf("\n---------------------------------\n");
+ 	 		printf("\n\n---------------------------------\n");
  	 		printf("frequency is %lf \n", freq_SIM_ISR.frequency);
  	 		printf("timestamp is %lf \n", freq_SIM_ISR.timestamp);
- 	 		printf("\n---------------------------------\n");
- 	 		printf("\ntimeflag is %d.\n", timerExpiryFlag);
+ 	 		printf("time_expiry_flag is %d.\n", timerExpiryFlag);
+ 	 		printf("Current Time is %d\n", xTaskGetTickCount());
+ 	 		printf("---------------------------------\n\n");
  	 		xQueueSendToFront(frequencyQ, &freq_SIM_ISR, 0 );
- 	 		vTaskDelay(100);
+ 	 		vTaskDelay(150);
 		}
 	}
 }
@@ -163,17 +180,18 @@ void FrequencyUpdaterTask( )
 		struct frequency_ROC frequency_ROC_Data;
 
 		while (1){
-			printf("\n !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! \n");
 			if (xQueueReceive(frequencyQ, &ReceiveGenerateFre, 0) == pdPASS){
+				printf("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
 				printf("Frequency ROC caculated. \n");
 				freqValNew = ReceiveGenerateFre.frequency;
 
 				if(isFirstIteration){
 					isFirstIteration = 0;
 					freqValOld = freqValNew;
+					printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n");
 					continue;
 				}
-				printf("FreqValNew is %lf \nFreqValOld is %lf\n ----\n", freqValNew, freqValOld);
+				printf("FreqValNew is %lf \nFreqValOld is %lf\n", freqValNew, freqValOld);
 				//rate of change equation from cs723 assignment 1 brief 2022
 				roc = ((freqValNew - freqValOld) * 16000) / ((16000/freqValNew + 16000/freqValOld) / 2 );
 				freqValOld = freqValNew;
@@ -184,11 +202,11 @@ void FrequencyUpdaterTask( )
 				printf("FreData is %lf\n", freqValNew);
 				printf("ROC is %lf \n", roc);
 				printf("Timestamp is %lf \n", frequency_ROC_Data.timestamp);
-				printf("Current Time is %d", xTaskGetTickCount()/5 + 20);
-				printf("\n !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! \n");
+			    printf("Current Time is %d\n", xTaskGetTickCount());
+				printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! \n\n");
 			}
 			fflush( stdout );
-			vTaskDelay(140);
+			vTaskDelay(150);
 		}
 }
 
@@ -212,27 +230,28 @@ void loadManagerTask(){
 		switch (loadManagerState){
 			case NORMAL:
 				if (xQueueReceive(freqRocDataQ, &frequency_ROC_Data, 0)){
-					printf("\n################Normal mode##################\n");
+					printf("\n################Queue Received success##################\n");
 					//store 50 recent frequency and roc
 					updateRunningData(frequency_ROC_Data);
-					printf("\n################Update finished##################\n");
+					printf("################Update finished##################\n");
 					//update the threshold
 
 					xSemaphoreTake(thresholdSemaphore, 0);
-					printf("\n################Load manager mode##################\n");
 					rocThresholdLocal = rocThreshold;
 					freqThresholdLocal = frequencyThreshold;
 					//problem is here
 				    xSemaphoreGive(thresholdSemaphore);
-					printf("given process is succeed!\n");
+					printf("Semaphore given process is succeed!\n");
 
 					isTripCond = checkTrippingConditions(frequency_ROC_Data, freqThresholdLocal, rocThresholdLocal);
 
-					printf("is Trip Cond = %d", isTripCond);
+					printf("Trip Condition = %d\n", isTripCond);
+
+					printf("Current Time is %d\n", xTaskGetTickCount());
 					if (isTripCond){
 						//first load shedding
 						shedLoad(SWITCHES);
-						computeReactionTimeStatus(xTaskGetTickCount()/5 + 20, frequency_ROC_Data);
+						computeReactionTimeStatus(xTaskGetTickCount(), frequency_ROC_Data);
 
 						//state become unstable
 						wasStable = 0;
@@ -241,13 +260,17 @@ void loadManagerTask(){
 
 						printf("\n################Load manager mode##################\n");
 					}
+					else{
+						printf("Nothing happened, everything is normal\n");
+						printf("##################################\n\n");
+					}
 				}
 				break;
 
 
 			case LOAD_MANAGE:
-				printf("\n################Load manager mode##################\n");
-				/*
+				printf("\n###############case second mode##################\n");
+
 				//Handles timer expiry if an input has not arrived yet
 				if (timerExpiryFlag){
 					printf("####Timer expiry before new input received#####\n");
@@ -269,6 +292,7 @@ void loadManagerTask(){
 
 
 				if (xQueueReceive(freqRocDataQ, &frequency_ROC_Data, 0)){
+					 	printf("\nReceive a new DATA within the 500ms!\n");
 						//store 50 recent frequency and roc
 						updateRunningData(frequency_ROC_Data);
 
@@ -305,11 +329,11 @@ void loadManagerTask(){
 							}
 						}else if (!isTripCond && !wasStable){
 							wasStable = 1;
+							printf("\nIt has become stable\n");
 							restartFreeRTOSTimer();
 						}
 
 				}
-				*/
 				break;
 				//isTripCond = false mean nothing happen , unstable (wasstable = 0)
 
@@ -318,7 +342,7 @@ void loadManagerTask(){
 				printf("\n################Maintenance mode##################\n");
 				break;
 		}
-		vTaskDelay(50);
+		vTaskDelay(150);
 	}
 }
 /*
@@ -394,8 +418,9 @@ int checkTrippingConditions(struct frequency_ROC frequency_ROC_Data,  double fre
 
 void vTimer500MSCallback(TimerHandle_t timer500ms){
 	timerExpiryFlag = 1;
-	printf("Current Time is %d", xTaskGetTickCount()/5 + 20);
-	printf("\n\n################Timer Expired!###############\n\n");
+	printf("\n\n#########################################\n");
+	printf("Current Time is %d\n", xTaskGetTickCount());
+	printf("################Timer Expired!###############\n\n");
 }
 
 //int loads[5] = {1, 2, 4, 8, 16};
@@ -448,6 +473,7 @@ int reconnectLoad(int SWITCHES[]){
 
 }
 
+//it has a problem about currentTime
 void computeReactionTimeStatus(double currentTime, struct frequency_ROC frequency_ROC_Data){
 	double reactionTimeLocal = currentTime - frequency_ROC_Data.timestamp;
 	printf("reactionTime is %lf", reactionTimeLocal);
