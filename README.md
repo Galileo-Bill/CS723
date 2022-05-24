@@ -1,6 +1,8 @@
 # CS723
 low_cost_frequency_relay
  
+The main code is located in the main_blinky.c file.
+
 It implement three tasks: FrequencyVirtualISRTask, FrequencyUpdaterTask and loadManagerTask. 
 
 Timestamp is the virtual global system time.
